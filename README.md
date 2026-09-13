@@ -50,7 +50,7 @@ node. Designed to run unattended or as part of a larger pipeline.
 
 ```bash
 git clone https://github.com/BleedingCodes/sftp-ultra.git
-cd sftp-ultra
+cd sftp-ultra/sftp-ultra
 pip install -e .
 ```
 
