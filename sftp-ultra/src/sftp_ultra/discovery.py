@@ -8,7 +8,7 @@ from typing import Iterable, Iterator, Sequence
 import paramiko
 
 from .model import RemoteFile
-from .paths import resolve_under_root
+from .paths import RemotePathError, resolve_under_root
 
 
 def remote_walk(
@@ -55,7 +55,17 @@ def discover_directories(
 
     for selection in directories:
         directory = resolve_under_root(selection, root)
-        info = sftp.stat(str(directory))
+
+        # Use lstat, not stat: stat() follows symlinks server-side, which
+        # would let a symlink planted under the remote root point anywhere
+        # on the remote filesystem and completely defeat the root
+        # confinement resolve_under_root() is supposed to guarantee.
+        info = sftp.lstat(str(directory))
+
+        if stat.S_ISLNK(info.st_mode):
+            raise RemotePathError(
+                f"Refusing to follow symlink under remote root: {directory}"
+            )
 
         if not stat.S_ISDIR(info.st_mode):
             raise NotADirectoryError(str(directory))
