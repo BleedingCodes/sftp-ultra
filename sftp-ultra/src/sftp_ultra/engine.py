@@ -209,11 +209,16 @@ def transfer_one(
 
                 checksum = None
                 if config.checksum is ChecksumMode.SHA256:
-                    local_hash = sha256_file(temporary_path, bucket)
+                    # Pass bucket=None for both checksum reads. The transfer
+                    # already consumed the bandwidth budget for these bytes.
+                    # Passing the bucket here would charge for them a second
+                    # time and silently halve effective throughput on every
+                    # checksummed file.
+                    local_hash = sha256_file(temporary_path, None)
                     remote_hash = remote_sha256(
                         sftp,
                         str(remote.path),
-                        bucket,
+                        None,
                     )
                     if local_hash != remote_hash:
                         raise RuntimeError("SHA-256 checksum mismatch.")
@@ -276,15 +281,26 @@ def run_plan(
     bucket = TokenBucket(config.bandwidth_limit_kib)
 
     if config.dry_run:
-        return [
-            Result(
+        # Build results and journal them so the plan is queryable after a
+        # dry run. Status.PLANNED was defined for exactly this purpose — a
+        # dry-run entry that records what would have transferred without any
+        # files being moved. Without journaling here, Status.PLANNED is an
+        # enum value that is defined but never persisted, which is confusing.
+        dry_results: list[Result] = []
+        for item in plan:
+            result = Result(
                 remote_path=str(item.remote.path),
                 local_path=str(item.local_path),
                 status=Status.PLANNED if item.action != "skip" else Status.SKIPPED,
                 message=item.reason,
             )
-            for item in plan
-        ]
+            journal.record(
+                result,
+                remote_size=item.remote.size,
+                remote_mtime=item.remote.mtime,
+            )
+            dry_results.append(result)
+        return dry_results
 
     results: list[Result] = []
 
