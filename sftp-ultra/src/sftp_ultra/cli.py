@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import sys
@@ -10,7 +11,7 @@ import paramiko
 
 from .discovery import discover_directories, discover_patterns
 from .engine import run_plan, write_report
-from .model import ChecksumMode, Config, OverwritePolicy, Status
+from .model import ChecksumMode, Config, OverwritePolicy, PlanItem, Status
 from .paths import normalize_remote
 from .planner import plan_transfers
 from .ssh import SFTPConnectionFactory, prompt_credentials
@@ -68,6 +69,32 @@ def ask_yes_no(prompt: str) -> bool:
         print("Please enter yes or no.")
 
 
+def resolve_ask_actions(plan: list[PlanItem]) -> list[PlanItem]:
+    """Turn each 'ask' PlanItem into a concrete 'skip' or 'transfer' by
+    prompting the user, one file at a time, before any transfer starts.
+
+    This must run single-threaded and before run_plan(): once files are
+    handed to the worker pool there is no safe place left to take
+    interactive input, so every conflict has to be resolved here first.
+    """
+    resolved: list[PlanItem] = []
+    for item in plan:
+        if item.action != "ask":
+            resolved.append(item)
+            continue
+
+        overwrite = ask_yes_no(
+            f"{item.local_path} already exists. Overwrite with "
+            f"{item.remote.path}?"
+        )
+        if overwrite:
+            resolved.append(dataclasses.replace(item, action="transfer", reason="overwritten (ask)"))
+        else:
+            resolved.append(dataclasses.replace(item, action="skip", reason="declined (ask)"))
+
+    return resolved
+
+
 def build_config(args: argparse.Namespace) -> Config:
     if not 1 <= args.workers <= 32:
         raise ValueError("workers must be between 1 and 32")
@@ -75,6 +102,8 @@ def build_config(args: argparse.Namespace) -> Config:
         raise ValueError("retries cannot be negative")
     if args.timeout <= 0:
         raise ValueError("timeout must be positive")
+    if args.bandwidth_limit_kib is not None and args.bandwidth_limit_kib <= 0:
+        raise ValueError("bandwidth-limit-kib must be a positive number")
 
     return Config(
         target=args.target,
@@ -132,6 +161,18 @@ def main(argv: list[str] | None = None) -> int:
                 )
 
         plan = plan_transfers(files, config)
+
+        if config.overwrite is OverwritePolicy.ASK and not config.assume_yes:
+            plan = resolve_ask_actions(plan)
+        elif config.overwrite is OverwritePolicy.ASK:
+            # --yes with --overwrite ask: nothing to prompt for, so default
+            # to skipping rather than silently overwriting.
+            plan = [
+                dataclasses.replace(item, action="skip", reason="ask policy + --yes: skipped")
+                if item.action == "ask"
+                else item
+                for item in plan
+            ]
 
         if config.manifest_path:
             config.manifest_path.parent.mkdir(parents=True, exist_ok=True)
