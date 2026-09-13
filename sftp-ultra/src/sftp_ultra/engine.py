@@ -80,6 +80,33 @@ def remote_sha256(
     return digest.hexdigest()
 
 
+def _resume_meta_path(temporary_path: Path) -> Path:
+    return temporary_path.with_name(temporary_path.name + ".meta")
+
+
+def _read_resume_meta(temporary_path: Path) -> dict | None:
+    meta_path = _resume_meta_path(temporary_path)
+    if not meta_path.exists():
+        return None
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_resume_meta(temporary_path: Path, *, remote_size: int, remote_mtime: int) -> None:
+    meta_path = _resume_meta_path(temporary_path)
+    meta_path.write_text(
+        json.dumps({"remote_size": remote_size, "remote_mtime": remote_mtime}),
+        encoding="utf-8",
+    )
+
+
+def _clear_resume_meta(temporary_path: Path) -> None:
+    meta_path = _resume_meta_path(temporary_path)
+    meta_path.unlink(missing_ok=True)
+
+
 def copy_with_resume(
     sftp: paramiko.SFTPClient,
     remote_path: str,
@@ -87,14 +114,31 @@ def copy_with_resume(
     *,
     resume: bool,
     bucket: TokenBucket,
+    remote_size: int,
+    remote_mtime: int,
 ) -> int:
-    resumed_from = temporary_path.stat().st_size if resume and temporary_path.exists() else 0
+    resumed_from = 0
 
-    if resumed_from and not resume:
+    if resume and temporary_path.exists():
+        meta = _read_resume_meta(temporary_path)
+        # Only trust the partial bytes already on disk if we recorded, at
+        # the time they were downloaded, the exact remote size/mtime we are
+        # about to resume against. If the remote file has been rewritten
+        # since (e.g. an encoder finalizing an mp4 by rewriting its header)
+        # the old bytes no longer belong to this version of the file, and
+        # splicing them onto the new tail would silently corrupt the
+        # output. In that case, start the download over from scratch.
+        if meta and meta.get("remote_size") == remote_size and meta.get("remote_mtime") == remote_mtime:
+            resumed_from = temporary_path.stat().st_size
+        else:
+            temporary_path.unlink()
+
+    if not resume and temporary_path.exists():
         temporary_path.unlink()
-        resumed_from = 0
+        _clear_resume_meta(temporary_path)
 
     mode = "ab" if resumed_from else "wb"
+    _write_resume_meta(temporary_path, remote_size=remote_size, remote_mtime=remote_mtime)
 
     with sftp.open(remote_path, "rb") as remote, temporary_path.open(mode) as local:
         if resumed_from:
@@ -146,6 +190,8 @@ def transfer_one(
                     temporary_path,
                     resume=config.resume,
                     bucket=bucket,
+                    remote_size=int(before.st_size),
+                    remote_mtime=int(before.st_mtime),
                 )
                 after = sftp.stat(str(remote.path))
 
@@ -174,6 +220,7 @@ def transfer_one(
                     checksum = local_hash
 
                 os.replace(temporary_path, local_path)
+                _clear_resume_meta(temporary_path)
 
                 if config.delete_source:
                     sftp.remove(str(remote.path))
