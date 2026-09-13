@@ -14,7 +14,7 @@ one-off script.
 - **Remote-change detection** — checks file size and mtime before and after download; aborts if the remote file changed mid-transfer
 - **Retry with exponential backoff** — configurable retry count with jitter to avoid thundering herd on reconnect
 - **SQLite transfer journal** — every transfer result is recorded with path, size, mtime, checksum, and timestamp
-- **Dry-run mode** — plan a transfer and see what would happen without transferring, modifying, or deleting any remote or local file content. (The SQLite journal file at `--journal` is still created, the same as a real run — it just receives no rows.)
+- **Dry-run mode** — plan a transfer and see what would happen without transferring, modifying, or deleting any remote or local file content. The SQLite journal is written with `planned` and `skipped` status entries so the plan is queryable after the run.
 - **Overwrite policies** — `skip`, `replace`, `rename` (auto-increments filename), or `ask`
 - **Source deletion** — optionally removes remote originals after a transfer that passed size/mtime consistency checks, requires confirmation. Pair with `--checksum sha256` for content-verified deletion — without it, only size and mtime are checked, not file contents.
 - **Bandwidth throttling** — token-bucket rate limiter, set in KiB/s
@@ -42,7 +42,7 @@ node. Designed to run unattended or as part of a larger pipeline.
 - Python 3.11+
 - Linux (developed and tested on Ubuntu / Linux Mint)
 - `paramiko >= 3.4`
-- SSH access to the remote host. Password authentication is explicitly supported via a per-run prompt. Key-based authentication may also work if an SSH agent is running or a default key (e.g. `~/.ssh/id_rsa`) is present — the underlying SSH library tries those first — but there is no `--identity-file` flag to select a specific key, and the tool still prompts for a password on every run even when a key ends up being used.
+- SSH access to the remote host. Password authentication is required on every run — the tool always prompts for a password and submits it to the SSH server. Key-based authentication is not currently supported: there is no `--identity-file` flag, and the password prompt cannot be bypassed even if an SSH agent or default key (`~/.ssh/id_rsa`) is present.
 
 ---
 
@@ -145,7 +145,7 @@ sftp-ultra pull --help
 | `--yes` | off | Skip confirmation prompts |
 | `--verbose` | off | Debug-level logging |
 
-Use `--pattern` or `--directory`, not both.
+Exactly one of `--pattern` or `--directory` must be provided. Specifying both, or neither, is a configuration error (exit code 2).
 
 ---
 
@@ -182,10 +182,15 @@ pip install pytest
 pytest
 ```
 
-Tests cover path confinement, remote path resolution, path traversal rejection,
-and transfer planning logic. This is a partial suite: engine.py, discovery.py,
-ssh.py, and cli.py do not yet have equivalent coverage. No live SSH connection
-is required to run what exists.
+No live SSH connection is required — all engine and discovery tests use mocks.
+
+**Coverage:**
+- `test_paths.py` — path confinement, remote path resolution, traversal rejection
+- `test_planner.py` — transfer planning, overwrite policy logic
+- `test_engine.py` — transfer_one (skip, copy, move, size mismatch, checksum mismatch), bandwidth double-counting regression, dry-run journal behaviour
+- `test_discovery.py` — remote_walk symlink guard (symlinked files and directories are skipped, regular directories recurse correctly)
+
+`ssh.py` and `cli.py` do not have unit tests. Both require either a live SSH connection or full CLI invocation to test meaningfully.
 
 ---
 
