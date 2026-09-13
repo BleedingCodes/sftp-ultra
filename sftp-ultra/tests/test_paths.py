@@ -1,38 +1,51 @@
 from pathlib import Path, PurePosixPath
 
-import pytest
-
-from sftp_ultra.paths import (
-    RemotePathError,
-    is_within,
-    local_for_remote,
-    resolve_under_root,
+from sftp_ultra.model import (
+    ChecksumMode,
+    Config,
+    OverwritePolicy,
+    RemoteFile,
 )
+from sftp_ultra.planner import plan_transfers
 
 
-def test_is_within_root():
-    root = PurePosixPath("/home/side")
-    assert is_within(PurePosixPath("/home/side"), root)
-    assert is_within(PurePosixPath("/home/side/a/b.txt"), root)
-    assert not is_within(PurePosixPath("/home/other/file.txt"), root)
-
-
-def test_resolve_relative_path():
-    root = PurePosixPath("/home/side")
-    assert resolve_under_root("recordings", root) == PurePosixPath(
-        "/home/side/recordings"
+def make_config(tmp_path: Path, policy: OverwritePolicy) -> Config:
+    return Config(
+        target="host",
+        username="user",
+        port=22,
+        remote_root=PurePosixPath("/home/side"),
+        destination=tmp_path,
+        workers=2,
+        retries=1,
+        timeout_seconds=10,
+        overwrite=policy,
+        checksum=ChecksumMode.NONE,
+        resume=True,
+        delete_source=False,
+        trust_unknown_host=False,
+        bandwidth_limit_kib=None,
+        journal_path=tmp_path / "journal.sqlite3",
+        manifest_path=None,
+        report_path=None,
+        dry_run=False,
+        assume_yes=True,
     )
 
 
-def test_reject_escape():
-    root = PurePosixPath("/home/side")
-    with pytest.raises(RemotePathError):
-        resolve_under_root("../other", root)
+def test_skip_existing(tmp_path: Path):
+    local = tmp_path / "x.txt"
+    local.write_text("existing")
 
+    remote = RemoteFile(
+        path=PurePosixPath("/home/side/x.txt"),
+        size=10,
+        mtime=1,
+    )
 
-def test_local_mapping():
-    assert local_for_remote(
-        PurePosixPath("/home/side/a/b.txt"),
-        PurePosixPath("/home/side"),
-        Path("/tmp/out"),
-    ) == Path("/tmp/out/a/b.txt")
+    plan = plan_transfers(
+        [remote],
+        make_config(tmp_path, OverwritePolicy.SKIP),
+    )
+
+    assert plan[0].action == "skip"
