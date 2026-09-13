@@ -197,22 +197,26 @@ No live SSH connection is required — all engine and discovery tests use mocks.
 ## Project Structure
 
 ```
-sftp-ultra/
-├── src/
-│   └── sftp_ultra/
-│       ├── cli.py          # Argument parsing and entry point
-│       ├── engine.py       # Transfer execution, retries, checksums, concurrency
-│       ├── discovery.py    # Remote file discovery by pattern or directory
-│       ├── planner.py      # Transfer plan generation and overwrite logic
-│       ├── journal.py      # SQLite transfer journal
-│       ├── ssh.py          # SSH/SFTP connection factory
-│       ├── paths.py        # Remote path validation and confinement
-│       └── model.py        # Data classes and enums
-├── tests/
-│   ├── test_planner.py
-│   └── test_paths.py
-├── pyproject.toml
-└── README.md
+sftp-ultra/                 ← repo root (clone lands here)
+├── README.md
+├── LICENSE
+└── sftp-ultra/             ← package root (run pip install -e . from here)
+    ├── pyproject.toml
+    ├── src/
+    │   └── sftp_ultra/
+    │       ├── cli.py          # Argument parsing and entry point
+    │       ├── engine.py       # Transfer execution, retries, checksums, concurrency
+    │       ├── discovery.py    # Remote file discovery by pattern or directory
+    │       ├── planner.py      # Transfer plan generation and overwrite logic
+    │       ├── journal.py      # SQLite transfer journal
+    │       ├── ssh.py          # SSH/SFTP connection factory
+    │       ├── paths.py        # Remote path validation and confinement
+    │       └── model.py        # Data classes and enums
+    └── tests/
+        ├── test_engine.py
+        ├── test_discovery.py
+        ├── test_planner.py
+        └── test_paths.py
 ```
 
 ---
