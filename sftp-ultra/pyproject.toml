@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sftp-ultra"
-version = "1.0.0"
+version = "1.0.1"
 description = "Resumable, concurrent, manifest-driven SFTP transfer engine"
 requires-python = ">=3.11"
 dependencies = [
