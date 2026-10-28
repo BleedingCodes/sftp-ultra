@@ -4,7 +4,8 @@ A production SFTP transfer engine for Linux environments. Built for teams and
 workflows that need reliable, verifiable, unattended file transfer — not a
 one-off script.
 ---
-#Disclosure: AI built on top of personal python file transfer script. ASLO: Went through a 3 phase AI Bug hunt and security vulnerabilities pipeline
+# Disclosure:
+AI built on top of personal python file transfer script. ASLO: Went through a 3 phase AI Bug hunt and security vulnerabilities pipeline
 ---
 
 ## What It Does
