@@ -4,6 +4,7 @@ import argparse
 import dataclasses
 import json
 import logging
+import sqlite3
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -15,7 +16,6 @@ from .model import ChecksumMode, Config, OverwritePolicy, PlanItem, Status
 from .paths import normalize_remote
 from .planner import plan_transfers
 from .ssh import SFTPConnectionFactory, prompt_credentials
-
 
 LOG = logging.getLogger("sftp_ultra")
 
@@ -104,6 +104,11 @@ def build_config(args: argparse.Namespace) -> Config:
         raise ValueError("timeout must be positive")
     if args.bandwidth_limit_kib is not None and args.bandwidth_limit_kib <= 0:
         raise ValueError("bandwidth-limit-kib must be a positive number")
+    # F9 (AUDIT-FINDINGS): --port had no range validation; out-of-range
+    # values surfaced as OverflowError from socket.connect and escaped the
+    # documented exit-code contract. Validate here so it maps to exit 2.
+    if not 1 <= args.port <= 65535:
+        raise ValueError("port must be between 1 and 65535")
 
     return Config(
         target=args.target,
@@ -228,8 +233,16 @@ def main(argv: list[str] | None = None) -> int:
     except (
         ValueError,
         OSError,
+        EOFError,
+        OverflowError,
+        sqlite3.Error,
         paramiko.SSHException,
     ) as error:
+        # F9: EOFError (closed stdin during prompting), OverflowError (e.g.
+        # an out-of-range port slipped past validation), and sqlite3.Error
+        # (journal failures) used to escape uncaught, producing a raw
+        # traceback and exit code 1 — indistinguishable in automation from
+        # "some transfers failed". The documented contract is exit 2.
         LOG.error("%s", error)
         return 2
 
