@@ -42,7 +42,7 @@ node. Designed to run unattended or as part of a larger pipeline.
 - Python 3.11+
 - Linux (developed and tested on Ubuntu / Linux Mint)
 - `paramiko >= 3.4`
-- SSH access to the remote host. Password authentication is required on every run — the tool always prompts for a password and submits it to the SSH server. Key-based authentication is not currently supported: there is no `--identity-file` flag, and the password prompt cannot be bypassed even if an SSH agent or default key (`~/.ssh/id_rsa`) is present.
+- SSH access to the remote host, reachable via **password authentication**. The typed password is the only credential used: the tool prompts for it and submits it directly (the SSH agent and `~/.ssh/id_*` default keys are deliberately not tried). For unattended machines there is a non-interactive path: `SFTP_ULTRA_PASSWORD` (environment variable). Without a TTY and without that variable, the run refuses to start (configuration error) rather than falling back to a password-echoing reader.
 
 ---
 
@@ -127,16 +127,16 @@ sftp-ultra pull --help
 | `--port` | `22` | SSH port |
 | `--remote-root` | `/home/side` | Remote root directory — all paths confined here |
 | `--destination` | `./downloads` | Local destination directory |
-| `--pattern` | — | Filename pattern(s) to match (e.g. `*.mp4`) |
+| `--pattern` | — | Filename pattern(s) to match (e.g. `*.mp4`). A pattern without `/` matches the basename in every walked directory; a pattern containing `/` matches against the path relative to the configured root (e.g. `sub/*.mp4` only matches files inside `sub/`) |
 | `--directory` | — | Remote subdirectory path(s) to transfer in full |
 | `--workers` | `4` | Number of concurrent transfer workers (max: 32) |
 | `--retries` | `3` | Retry attempts per file on failure |
-| `--timeout` | `20` | SSH connection timeout in seconds |
-| `--overwrite` | `skip` | Overwrite policy: `skip`, `replace`, `rename`, `ask` |
+| `--timeout` | `20` | SSH timeout in seconds — covers connect/auth **and** in-transfer data reads |
+| `--overwrite` | `skip` | Overwrite policy: `skip`, `replace`, `rename`, `ask` — re-verified per file at transfer time |
 | `--checksum` | `none` | Checksum mode: `none` or `sha256` |
 | `--resume` | off | Resume interrupted `.part` downloads |
 | `--delete-source` | off | Delete remote file after verified transfer |
-| `--trust-unknown-host` | off | Auto-accept unknown host keys (use with caution) |
+| `--trust-unknown-host` | off | Trust-on-first-use: unknown host keys are accepted **once** and pinned to `~/.local/state/sftp-ultra/known_hosts`, then verified on later runs (changed keys fail). Use with caution — a first-run MITM gets pinned. |
 | `--bandwidth-limit-kib` | unlimited | Bandwidth cap in KiB/s |
 | `--journal` | `.sftp-ultra.sqlite3` | SQLite journal path |
 | `--manifest` | — | Write transfer plan to JSON file before execution |
@@ -158,7 +158,7 @@ Schema:
 
 | Column | Description |
 |---|---|
-| `remote_path` | Full remote path (primary key) |
+| `remote_path` | Full remote path (part of the primary key together with `run_kind`) |
 | `local_path` | Local destination path |
 | `status` | `copied`, `moved`, `skipped`, `failed`, `planned` |
 | `remote_size` | File size on remote at transfer time |
@@ -166,6 +166,7 @@ Schema:
 | `checksum` | SHA-256 hex digest (if `--checksum sha256`) |
 | `message` | Error message on failure |
 | `updated_at` | Timestamp of last update |
+| `run_kind` | `session` (real run) or `dry_run` — dry-run rows never overwrite real audit statuses |
 
 Query the journal directly:
 
@@ -189,8 +190,9 @@ No live SSH connection is required — all engine and discovery tests use mocks.
 - `test_planner.py` — transfer planning, overwrite policy logic
 - `test_engine.py` — transfer_one (skip, copy, move, size mismatch, checksum mismatch), bandwidth double-counting regression, dry-run journal behaviour
 - `test_discovery.py` — remote_walk symlink guard (symlinked files and directories are skipped, regular directories recurse correctly)
+- `test_audit_findings.py` — permanent regression tests for every `docs/AUDIT-FINDINGS.md` finding that carries a seam-level guard: token bucket vs large chunks (F1), SFTP data-channel timeout (F2), host-key TOFU pinning (F3), password-only auth (F4), journal-failure isolation on the delete-source path (F5), transfer-time overwrite re-check incl. rename retarget (F6), hostile server entries and sparse attributes (F7), transfer-time symlink refusal (F8), CLI exit-code contract for EOF/port (F9), path-aware patterns (F10), non-interactive credentials (F11), journal connection/dry-run isolation (F12), `open_sftp()` failure hygiene (review finding N1).
 
-`ssh.py` and `cli.py` do not have unit tests. Both require either a live SSH connection or full CLI invocation to test meaningfully.
+`ssh.py` and `cli.py` do not have live-server unit tests; their seams are covered by `test_audit_findings.py` through patched connections (the README previously overstated the gap).
 
 ---
 
@@ -223,7 +225,7 @@ sftp-ultra/                 ← repo root (clone lands here)
 
 ## Built by MainbyteLabs
 
-Python tooling for electronics labs, hardware shops, and Linux-based tech teams — developed with AI, directed and tested by a working electronics technician.
+Python tooling for electronics labs, hardware shops, and Linux-based tech teams.
 
 [MainbyteLabs](https://github.com/MR-MainbyteLabs) ·
 [LinkedIn](https://linkedin.com/in/michael-rivera-c0ding) ·
