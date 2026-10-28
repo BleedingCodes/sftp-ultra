@@ -53,6 +53,14 @@ def local_for_remote(
         )
 
     relative = remote_path.relative_to(remote_root)
+    if ".." in relative.parts:
+        # F7 (AUDIT-FINDINGS): is_within() alone passes paths that carry a
+        # literal '..' component (pathlib treats it as a normal name), so
+        # a server-supplied ".." went on to map the transfer outside the
+        # destination. Refuse here, independent of the walk's own guards.
+        raise RemotePathError(
+            f"Remote path contains a '..' component: {remote_path}"
+        )
     return destination_root.joinpath(*relative.parts)
 
 
